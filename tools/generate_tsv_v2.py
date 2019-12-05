@@ -7,7 +7,7 @@
 
 
 # Example:
-# python ./tools/generate_tsv_v2.py --gpu 0,1,2,3,4,5,6,7 --cfg experiments/cfgs/faster_rcnn_end2end_resnet.yml --def models/vg/ResNet-101/faster_rcnn_end2end/test.prototxt --net data/faster_rcnn_models/resnet101_faster_rcnn_final.caffemodel --split conceptual_captions_train --data_root {Conceptual_Captions_Root} --out {Conceptual_Captions_Root}/train_frcnn/
+# python ./tools/generate_tsv_v2.py --gpu 0,1,2,3,4,5,6,7 --cfg experiments/cfgs/faster_rcnn_end2end_resnet.yml --def models/vg/ResNet-101/faster_rcnn_end2end_final/test.prototxt --net data/faster_rcnn_models/resnet101_faster_rcnn_final.caffemodel --split conceptual_captions_train --data_root {Conceptual_Captions_Root} --out {Conceptual_Captions_Root}/train_frcnn/
 
 
 import _init_paths
@@ -43,7 +43,7 @@ def load_image_ids(split_name, data_root):
     ''' Load a list of (path,image_id tuples). Modify this to suit your data locations. '''
     split = []
     if split_name == 'conceptual_captions_train':
-      with open(os.path.join(data_root, '/utils/train.json')) as f:
+      with open(os.path.join(data_root, 'utils/train.json')) as f:
         for cnt, line in enumerate(f):  
           d = json.loads(line)
           cap = d['caption']
@@ -51,7 +51,7 @@ def load_image_ids(split_name, data_root):
           image_id = int(filepath.split('/')[-1][:-4])
           split.append((filepath,image_id))
     elif split_name == 'conceptual_captions_val':
-      with open(os.path.join(data_root, '/utils/val.json')) as f:
+      with open(os.path.join(data_root, 'utils/val.json')) as f:
         for cnt, line in enumerate(f):  
           d = json.loads(line)
           cap = d['caption']
@@ -64,7 +64,7 @@ def load_image_ids(split_name, data_root):
 
     
 def get_detections_from_im(net, im_file, image_id, ziphelper, data_root, conf_thresh=0.5):
-    zip_image = ziphelper.imread(str(join(data_root, im_file)))
+    zip_image = ziphelper.imread(str(os.path.join(data_root, im_file)))
     im = cv2.cvtColor(np.array(zip_image), cv2.COLOR_RGB2BGR)
     scores, boxes, attr_scores, rel_scores = im_detect(net, im)
 
@@ -139,7 +139,7 @@ def parse_args():
     return args
 
     
-def generate_tsv(gpu_id, prototxt, weights, image_ids, outfolder):
+def generate_tsv(gpu_id, prototxt, weights, image_ids, data_root, outfolder):
     # First check if file exists, and if it is complete
     wanted_ids = set([int(image_id[1]) for image_id in image_ids])
     found_ids = set()
@@ -167,7 +167,7 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, outfolder):
                 _t['misc'].tic()
                 json_file = "{:08d}.json".format(image_id)
                 with open(os.path.join(outfolder, json_file), 'w') as f:
-                    json.dump(get_detections_from_im(net, im_file, image_id, ziphelper), f)
+                    json.dump(get_detections_from_im(net, im_file, image_id, ziphelper, data_root), f)
                 _t['misc'].toc()
                 if (count % 100) == 0:
                     print 'GPU {:d}: {:d}/{:d} {:.3f}s (projected finish: {:.2f} hours)' \
