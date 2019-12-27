@@ -7,7 +7,7 @@
 
 
 # Example:
-# python ./tools/generate_tsv_v2.py --gpu 0,1,2,3,4,5,6,7 --cfg experiments/cfgs/faster_rcnn_end2end_resnet.yml --def models/vg/ResNet-101/faster_rcnn_end2end_final/test.prototxt --net data/faster_rcnn_models/resnet101_faster_rcnn_final.caffemodel --split conceptual_captions_train --data_root {Conceptual_Captions_Root} --out {Conceptual_Captions_Root}/train_frcnn/
+# python ./tools/generate_tsv_vcr.py --gpu 0,1,2,3 --cfg experiments/cfgs/faster_rcnn_end2end_resnet.yml --def models/vg/ResNet-101/faster_rcnn_end2end/test.prototxt --net data/faster_rcnn_models/resnet101_faster_rcnn_final.caffemodel --ann_file train.jsonl --data_root {VCR_Root} --out {VCR_Root}/train_frcnn/
 
 
 import _init_paths
@@ -28,6 +28,7 @@ import csv
 from multiprocessing import Process
 import random
 import json
+import jsonlines
 
 csv.field_size_limit(sys.maxsize)
 
@@ -39,31 +40,38 @@ FIELDNAMES = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'classes', '
 MIN_BOXES = 10
 MAX_BOXES = 36
 
-def load_image_ids(split_name, data_root):
-    ''' Load a list of (path,image_id tuples). Modify this to suit your data locations. '''
-    split = []
-    if split_name == 'conceptual_captions_train':
-      with open(os.path.join(data_root, 'utils/train.json')) as f:
-        for cnt, line in enumerate(f):  
-          d = json.loads(line)
-          cap = d['caption']
-          filepath = d['image']
-          image_id = int(filepath.split('/')[-1][:-4])
-          split.append((filepath,image_id))
-    elif split_name == 'conceptual_captions_val':
-      with open(os.path.join(data_root, 'utils/val.json')) as f:
-        for cnt, line in enumerate(f):  
-          d = json.loads(line)
-          cap = d['caption']
-          filepath = d['image']
-          image_id = int(filepath.split('/')[-1][:-4])
-          split.append((filepath,image_id))   
+def load_image_ids(ann_file, data_root):
+    tic = time.time()
+    if ann_file == 'train.jsonl':
+        prefix = 'train'
+    elif ann_file == 'val.jsonl':
+        prefix = 'val'
     else:
-      print 'Unknown split'
+        raise Exception('Unknown annotation file')
+    ann_file = os.path.join(data_root, ann_file)
+    split = []
+    frcnn = []
+    # ignore or not find cached database, reload it from annotation file
+    print('loading database from {}...'.format(ann_file))
+
+    with jsonlines.open(ann_file) as reader:
+        for ann in reader:
+            img_fn = os.path.join(data_root, 'vcr1images.zip@/vcr1images', ann['img_fn'])
+            image_id = img_fn.split('/')[-1][:-4]
+            split.append((img_fn,image_id))
+            frcnn.append({'image':"vcr1images.zip@/vcr1images/{}".format(ann['img_fn']), 'frcnn':prefix+"_frcnn.zip@/{}.json".format(ann['img_fn'])})
+    
+    with open(os.path.join(data_root, prefix+'_frcnn.json'), 'w') as outfile:
+        for frcnn_detail in frcnn:
+            json.dump(frcnn_detail, outfile)
+            outfile.write('\n')
+
+    print('Done (t={:.2f}s)'.format(time.time() - tic))
     return split
 
     
 def get_detections_from_im(net, im_file, image_id, ziphelper, data_root, conf_thresh=0.5):
+    print im_file
     zip_image = ziphelper.imread(str(os.path.join(data_root, im_file)))
     im = cv2.cvtColor(np.array(zip_image), cv2.COLOR_RGB2BGR)
     scores, boxes, attr_scores, rel_scores = im_detect(net, im)
@@ -124,12 +132,9 @@ def parse_args():
                         default=None, type=str)
     parser.add_argument('--cfg', dest='cfg_file',
                         help='optional config file', default=None, type=str)
-    parser.add_argument('--split', dest='data_split',
-                        help='dataset to use',
-                        default=None, type=str)
-    parser.add_argument('--set', dest='set_cfgs',
-                        help='set config keys', default=None,
-                        nargs=argparse.REMAINDER)
+    parser.add_argument('--ann_file', dest='ann_file',
+                        help='the annotation file from vcr', 
+                        default='train.jsonl', type=str)
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -141,13 +146,13 @@ def parse_args():
     
 def generate_tsv(gpu_id, prototxt, weights, image_ids, data_root, outfolder):
     # First check if file exists, and if it is complete
-    wanted_ids = set([int(image_id[1]) for image_id in image_ids])
+    wanted_ids = set([image_id[1] for image_id in image_ids])
     found_ids = set()
     if os.path.exists(outfolder):
         for ids in wanted_ids:
-            json_file = "{:08d}.json".format(ids)
+            json_file = "{}.json".format(ids)
             if os.path.exists(os.path.join(outfolder, json_file)):
-                found_ids.add(int(item['image_id']))
+                found_ids.add(int(ids))
 
     missing = wanted_ids - found_ids
     if len(missing) == 0:
@@ -163,9 +168,9 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, data_root, outfolder):
         _t = {'misc' : Timer()}
         count = 0
         for im_file,image_id in image_ids:
-            if int(image_id) in missing:
+            if image_id in missing:
                 _t['misc'].tic()
-                json_file = "{:08d}.json".format(image_id)
+                json_file = ".json".format(image_id)
                 with open(os.path.join(outfolder, json_file), 'w') as f:
                     json.dump(get_detections_from_im(net, im_file, image_id, ziphelper, data_root), f)
                 _t['misc'].toc()
@@ -184,8 +189,6 @@ if __name__ == '__main__':
 
     if args.cfg_file is not None:
         cfg_from_file(args.cfg_file)
-    if args.set_cfgs is not None:
-        cfg_from_list(args.set_cfgs)
 
     gpu_id = args.gpu_id
     gpu_list = gpu_id.split(',')
@@ -195,7 +198,7 @@ if __name__ == '__main__':
     pprint.pprint(cfg)
     assert cfg.TEST.HAS_RPN
 
-    image_ids = load_image_ids(args.data_split, args.data_root)
+    image_ids = load_image_ids(args.ann_file, args.data_root)
     random.seed(10)
     random.shuffle(image_ids)
     # Split image ids between gpus
@@ -215,4 +218,5 @@ if __name__ == '__main__':
         p.start()
         procs.append(p)
     for p in procs:
-        p.join()      
+        p.join()            
+                  
