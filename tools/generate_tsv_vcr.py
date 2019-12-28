@@ -5,7 +5,6 @@
    separate tsv file that can be merged later (e.g. by using merge_tsv function). 
    Modify the load_image_ids script as necessary for your data location. """
 
-
 # Example:
 # python ./tools/generate_tsv_vcr.py --gpu 0,1,2,3 --cfg experiments/cfgs/faster_rcnn_end2end_resnet.yml --def models/vg/ResNet-101/faster_rcnn_end2end/test.prototxt --net data/faster_rcnn_models/resnet101_faster_rcnn_final.caffemodel --ann_file train.jsonl --data_root {VCR_Root} --out {VCR_Root}/train_frcnn/
 
@@ -57,9 +56,10 @@ def load_image_ids(ann_file, data_root):
     with jsonlines.open(ann_file) as reader:
         for ann in reader:
             img_fn = os.path.join(data_root, 'vcr1images.zip@/vcr1images', ann['img_fn'])
-            image_id = img_fn.split('/')[-1][:-4]
+            movie_id = img_fn.split('/')[-2]
+            image_id = movie_id + '_' +img_fn.split('/')[-1][:-4]
             split.append((img_fn,image_id))
-            frcnn.append({'image':"vcr1images.zip@/vcr1images/{}".format(ann['img_fn']), 'frcnn':prefix+"_frcnn.zip@/{}.json".format(ann['img_fn'])})
+            frcnn.append({'image':"vcr1images.zip@/vcr1images/{}".format(ann['img_fn']), 'frcnn':prefix+"_frcnn.zip@/{}.json".format(image_id)})
     
     if not os.path.exists(os.path.join(data_root, prefix+'_frcnn.json')):
         with open(os.path.join(data_root, prefix+'_frcnn.json'), 'w') as outfile:
