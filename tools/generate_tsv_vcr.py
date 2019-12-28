@@ -61,10 +61,11 @@ def load_image_ids(ann_file, data_root):
             split.append((img_fn,image_id))
             frcnn.append({'image':"vcr1images.zip@/vcr1images/{}".format(ann['img_fn']), 'frcnn':prefix+"_frcnn.zip@/{}.json".format(ann['img_fn'])})
     
-    with open(os.path.join(data_root, prefix+'_frcnn.json'), 'w') as outfile:
-        for frcnn_detail in frcnn:
-            json.dump(frcnn_detail, outfile)
-            outfile.write('\n')
+    if not os.path.exists(os.path.join(data_root, prefix+'_frcnn.json')):
+        with open(os.path.join(data_root, prefix+'_frcnn.json'), 'w') as outfile:
+            for frcnn_detail in frcnn:
+                json.dump(frcnn_detail, outfile)
+                outfile.write('\n')
 
     print('Done (t={:.2f}s)'.format(time.time() - tic))
     return split
@@ -152,14 +153,15 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, data_root, outfolder):
         for ids in wanted_ids:
             json_file = "{}.json".format(ids)
             if os.path.exists(os.path.join(outfolder, json_file)):
-                found_ids.add(int(ids))
+                found_ids.add(ids)
 
     missing = wanted_ids - found_ids
     if len(missing) == 0:
         print 'GPU {:d}: already completed {:d}'.format(gpu_id, len(image_ids))
     else:
-        print 'GPU {:d}: missing {:d}/{:d}'.format(gpu_id, len(missing), len(image_ids))
-        
+        print 'GPU {:d}: missing {:d}/{:d}'.format(gpu_id, len(missing), len(wanted_ids))
+
+    worked_ids = set()
     if len(missing) > 0:
         caffe.set_mode_gpu()
         caffe.set_device(gpu_id)
@@ -168,14 +170,15 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, data_root, outfolder):
         _t = {'misc' : Timer()}
         count = 0
         for im_file,image_id in image_ids:
-            if image_id in missing:
+            if image_id in missing and image_id not in worked_ids:
+                worked_ids.add(image_id)
                 _t['misc'].tic()
-                json_file = ".json".format(image_id)
+                json_file = "{}.json".format(image_id)
                 with open(os.path.join(outfolder, json_file), 'w') as f:
                     json.dump(get_detections_from_im(net, im_file, image_id, ziphelper, data_root), f)
                 _t['misc'].toc()
                 if (count % 100) == 0:
-                    print 'GPU {:d}: {:d}/{:d} {:.3f}s (projected finish: {:.2f} hours)' \
+                    print '\r\n GPU {:d}: {:d}/{:d} {:.3f}s (projected finish: {:.2f} hours) \r\n' \
                           .format(gpu_id, count+1, len(missing), _t['misc'].average_time, 
                           _t['misc'].average_time*(len(missing)-count)/3600)
                 count += 1
