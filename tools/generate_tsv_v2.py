@@ -34,16 +34,16 @@ csv.field_size_limit(sys.maxsize)
 
 FIELDNAMES = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'classes', 'attrs', 'features']
 
-# Settings for the number of features per image. To re-create pretrained features with 36 features
-# per image, set both values to 36. 
+# Settings for the number of features per image. To re-create pretrained features with 100 features
+# per image, set both values to 100. 
 MIN_BOXES = 10
-MAX_BOXES = 36
+MAX_BOXES = 100
 
 def load_image_ids(split_name, data_root):
     ''' Load a list of (path,image_id tuples). Modify this to suit your data locations. '''
     split = []
     if split_name == 'conceptual_captions_train':
-      with open(os.path.join(data_root, 'utils/train.json')) as f:
+      with open(os.path.join(data_root, 'train.json')) as f:
         for cnt, line in enumerate(f):  
           d = json.loads(line)
           cap = d['caption']
@@ -51,7 +51,7 @@ def load_image_ids(split_name, data_root):
           image_id = int(filepath.split('/')[-1][:-4])
           split.append((filepath,image_id))
     elif split_name == 'conceptual_captions_val':
-      with open(os.path.join(data_root, 'utils/val.json')) as f:
+      with open(os.path.join(data_root, 'val.json')) as f:
         for cnt, line in enumerate(f):  
           d = json.loads(line)
           cap = d['caption']

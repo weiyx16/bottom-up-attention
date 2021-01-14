@@ -15,6 +15,7 @@ from fast_rcnn.config import cfg, cfg_from_file
 from fast_rcnn.test import im_detect,_get_blobs
 from fast_rcnn.nms_wrapper import nms
 from utils.timer import Timer
+from zip_helper import ZipHelper
 
 import caffe
 import argparse
@@ -31,8 +32,8 @@ import json
 csv.field_size_limit(sys.maxsize)
 
 
-FIELDNAMES = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'features']
-
+#FIELDNAMES = ['image_id', 'image_w','image_h','num_boxes', 'boxes', 'features']
+FIELDNAMES = ["image_id", "images"]
 # Settings for the number of features per image. To re-create pretrained features with 36 features
 # per image, set both values to 36. 
 MIN_BOXES = 10
@@ -61,14 +62,28 @@ def load_image_ids(split_name):
           image_id = int(item['image_id'])
           filepath = os.path.join('/data/visualgenome/', item['url'].split('rak248/')[-1])
           split.append((filepath,image_id))      
+    elif split_name == 'coco_test-dev2015':
+      with open('/data/home/v-yixwe/cc-yixwe_new/data/coco/vqa/v2_OpenEnded_mscoco_test-dev2015_questions.json') as f:
+        data = json.load(f)
+        img_set = set()
+        for item in data['questions']:
+          image_id = int(item['image_id'])
+          if image_id in img_set:
+              continue
+          img_set.add(image_id)
+          filepath = '/data/home/v-yixwe/cc-yixwe_new/data/coco/test2015.zip@/test2015/COCO_test2015_{:012d}.jpg'.format(image_id)
+          split.append((filepath,image_id))
     else:
-      print 'Unknown split'
+      print('Unknown split')
     return split
 
     
-def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2):
-
-    im = cv2.imread(im_file)
+def get_detections_from_im(net, im_file, image_id, ziphelper=None, conf_thresh=0.2):
+    if ziphelper is not None:
+        zip_image = ziphelper.imread(im_file)
+        im = cv2.cvtColor(np.array(zip_image), cv2.COLOR_RGB2BGR)
+    else:
+        im = cv2.imread(im_file)
     scores, boxes, attr_scores, rel_scores = im_detect(net, im)
 
     # Keep the original boxes, don't worry about the regresssion bbox outputs
@@ -94,13 +109,37 @@ def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2):
     elif len(keep_boxes) > MAX_BOXES:
         keep_boxes = np.argsort(max_conf)[::-1][:MAX_BOXES]
    
+    boxes = cls_boxes[keep_boxes]
+    image_width = np.size(im, 1)
+    image_height = np.size(im, 0)
+    features = pool5[keep_boxes]
+
+    box_width = boxes[:, 2] - boxes[:, 0]
+    box_height = boxes[:, 3] - boxes[:, 1]
+    scaled_width = box_width / image_width
+    scaled_height = box_height / image_height
+    scaled_x = boxes[:, 0] / image_width
+    scaled_y = boxes[:, 1] / image_height
+    scaled_width = scaled_width[..., np.newaxis]
+    scaled_height = scaled_height[..., np.newaxis]
+    scaled_x = scaled_x[..., np.newaxis]
+    scaled_y = scaled_y[..., np.newaxis]
+    spatial_features = np.concatenate(
+         (scaled_x,
+          scaled_y,
+          scaled_x + scaled_width,
+          scaled_y + scaled_height,
+          scaled_width,
+          scaled_height),
+         axis=1)
+    full_features = np.concatenate((features, spatial_features), axis=1)
+    fea_base64 = base64.b64encode(full_features)
+    fea_info = {"num_boxes": boxes.shape[0],
+        "features": fea_base64}
+
     return {
-        'image_id': image_id,
-        'image_h': np.size(im, 0),
-        'image_w': np.size(im, 1),
-        'num_boxes' : len(keep_boxes),
-        'boxes': base64.b64encode(cls_boxes[keep_boxes]),
-        'features': base64.b64encode(pool5[keep_boxes])
+        "image_id": image_id,
+        "images": fea_info,
     }   
 
 
@@ -148,13 +187,16 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, outfile):
                 found_ids.add(int(item['image_id']))
     missing = wanted_ids - found_ids
     if len(missing) == 0:
-        print 'GPU {:d}: already completed {:d}'.format(gpu_id, len(image_ids))
+        print('GPU {:d}: already completed {:d}'.format(gpu_id, len(image_ids)))
     else:
-        print 'GPU {:d}: missing {:d}/{:d}'.format(gpu_id, len(missing), len(image_ids))
+        print('GPU {:d}: missing {:d}/{:d}'.format(gpu_id, len(missing), len(image_ids)))
     if len(missing) > 0:
         caffe.set_mode_gpu()
         caffe.set_device(gpu_id)
         net = caffe.Net(prototxt, caffe.TEST, weights=weights)
+        ziphelper = None
+        if '@' in image_ids[0][0]:
+            ziphelper = ZipHelper()
         with open(outfile, 'ab') as tsvfile:
             writer = csv.DictWriter(tsvfile, delimiter = '\t', fieldnames = FIELDNAMES)   
             _t = {'misc' : Timer()}
@@ -162,12 +204,12 @@ def generate_tsv(gpu_id, prototxt, weights, image_ids, outfile):
             for im_file,image_id in image_ids:
                 if int(image_id) in missing:
                     _t['misc'].tic()
-                    writer.writerow(get_detections_from_im(net, im_file, image_id))
+                    writer.writerow(get_detections_from_im(net, im_file, image_id, ziphelper))
                     _t['misc'].toc()
                     if (count % 100) == 0:
-                        print 'GPU {:d}: {:d}/{:d} {:.3f}s (projected finish: {:.2f} hours)' \
+                        print('GPU {:d}: {:d}/{:d} {:.3f}s (projected finish: {:.2f} hours)' \
                               .format(gpu_id, count+1, len(missing), _t['misc'].average_time, 
-                              _t['misc'].average_time*(len(missing)-count)/3600)
+                              _t['misc'].average_time*(len(missing)-count)/3600))
                     count += 1
 
                     
@@ -187,7 +229,7 @@ def merge_tsvs():
                     try:
                       writer.writerow(item)
                     except Exception as e:
-                      print e                           
+                      print(e)                           
 
                       
      
